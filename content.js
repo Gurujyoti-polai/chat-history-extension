@@ -5,7 +5,8 @@
   let lastMessageCount = 0;
   let currentUrl = window.location.href;
   let tabId = null;
-  let pendingUserMessages = new Map(); // Track pending user messages
+  let pendingUserMessages = new Map();
+  let lastVisibleMessageIds = new Set(); // Track currently visible messages
   
   const hostname = window.location.hostname;
   let platform = null;
@@ -38,13 +39,19 @@
         return el.textContent.trim();
       },
       hasAssistantResponse: (allMessages, userMessageIndex) => {
-        // Check if there's an assistant message after this user message
         for (let i = userMessageIndex + 1; i < allMessages.length; i++) {
           if (config.isAssistantMessage(allMessages[i])) {
             return true;
           }
         }
         return false;
+      },
+      // Detect if chat was edited/branched
+      detectBranch: (el) => {
+        // Check for branch indicators in Claude
+        const hasBranchButton = el.querySelector('[aria-label*="branch"]') || 
+                               el.querySelector('[title*="branch"]');
+        return !!hasBranchButton;
       }
     },
     'chat.openai.com': {
@@ -62,6 +69,9 @@
           }
         }
         return false;
+      },
+      detectBranch: (el) => {
+        return false; // ChatGPT handles this differently
       }
     },
     'chatgpt.com': {
@@ -79,6 +89,9 @@
           }
         }
         return false;
+      },
+      detectBranch: (el) => {
+        return false;
       }
     },
     'gemini.google.com': {
@@ -92,6 +105,9 @@
             return true;
           }
         }
+        return false;
+      },
+      detectBranch: (el) => {
         return false;
       }
     }
@@ -152,6 +168,7 @@
       messageElements.clear();
       messageContents.clear();
       pendingUserMessages.clear();
+      lastVisibleMessageIds.clear();
       lastMessageCount = 0;
     }
   }
@@ -241,13 +258,36 @@
     checkUrlChange();
     
     const msgs = document.querySelectorAll(config.messageSelector);
+    const allMessages = Array.from(msgs);
+    
+    // Get current visible message IDs
+    const currentVisibleIds = new Set();
+    allMessages.forEach(el => {
+      const txt = config.getContent(el);
+      if (txt.length >= 5 && txt.length <= 10000) {
+        const msgId = hashString(txt + storageKey);
+        currentVisibleIds.add(msgId);
+      }
+    });
+    
+    // Detect if messages disappeared (branch/edit scenario)
+    const messagesDisappeared = Array.from(lastVisibleMessageIds).some(id => !currentVisibleIds.has(id));
+    
+    if (messagesDisappeared && lastVisibleMessageIds.size > 0) {
+      // Branch detected - rebuild the conversation from scratch
+      await rebuildConversation(allMessages);
+      lastVisibleMessageIds = currentVisibleIds;
+      detectCurrentPosition();
+      return;
+    }
+    
+    lastVisibleMessageIds = currentVisibleIds;
     
     if (msgs.length !== lastMessageCount) {
       lastMessageCount = msgs.length;
     }
     
     const newMessages = [];
-    const allMessages = Array.from(msgs);
     
     // Clean up old pending messages that now have responses
     const pendingToRemove = [];
@@ -288,7 +328,6 @@
         const hasResponse = config.hasAssistantResponse(allMessages, idx);
         
         if (hasResponse) {
-          // This user message has a response, save it
           trackedMessages.add(msgId + '_saved');
           newMessages.push({
             id: msgId,
@@ -299,10 +338,8 @@
             index: idx
           });
           
-          // Remove from pending if it was there
           pendingUserMessages.delete(msgId);
         } else {
-          // No response yet, track it as pending
           if (!pendingUserMessages.has(msgId)) {
             pendingUserMessages.set(msgId, {
               content: txt,
@@ -319,7 +356,6 @@
     const messagesToRemove = [];
     pendingUserMessages.forEach((msgData, msgId) => {
       if (now - msgData.timestamp > 5000) {
-        // Message has been pending for more than 5 seconds, likely hit limit
         messagesToRemove.push(msgId);
         trackedMessages.delete(msgId + '_saved');
       }
@@ -334,6 +370,66 @@
     }
 
     detectCurrentPosition();
+  }
+
+  async function rebuildConversation(allMessages) {
+    // Clear all tracking
+    trackedMessages.clear();
+    messageElements.clear();
+    messageContents.clear();
+    pendingUserMessages.clear();
+    
+    // Build new message list from scratch based on what's visible
+    const messagesToSave = [];
+    
+    allMessages.forEach((el, idx) => {
+      const txt = config.getContent(el);
+      
+      if (txt.length < 5 || txt.length > 10000) return;
+      
+      const msgId = hashString(txt + storageKey);
+      
+      messageContents.set(msgId, txt);
+      trackedMessages.add(msgId);
+      el.dataset.trackedId = msgId;
+      messageElements.set(msgId, el);
+      
+      const isUser = config.isUserMessage(el, idx);
+      
+      if (isUser) {
+        const hasResponse = config.hasAssistantResponse(allMessages, idx);
+        
+        if (hasResponse) {
+          trackedMessages.add(msgId + '_saved');
+          messagesToSave.push({
+            id: msgId,
+            role: 'user',
+            content: txt,
+            summary: txt.slice(0, 60) + (txt.length > 60 ? '...' : ''),
+            timestamp: new Date().toISOString(),
+            index: idx
+          });
+        }
+      }
+    });
+    
+    // Replace entire conversation in storage
+    const conversation = {
+      url: window.location.href,
+      title: document.title || `${platform} Chat`,
+      createdAt: new Date().toISOString(),
+      tabId: tabId,
+      messages: messagesToSave
+    };
+    
+    await chrome.storage.local.set({ [storageKey]: conversation });
+    
+    // Notify popup to refresh
+    chrome.runtime.sendMessage({
+      action: 'conversationRebuilt',
+      storageKey: storageKey,
+      tabId: tabId
+    }).catch(() => {});
   }
 
   async function saveMessages(newMessages) {

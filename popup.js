@@ -271,5 +271,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }
     sendResponse({ success: true });
   }
+  
+  // Handle conversation rebuild (when chat is edited/branched)
+  if (request.action === "conversationRebuilt") {
+    if (request.tabId === currentTabId) {
+      const storageKey = getStorageKey(currentUrl, currentTabId);
+      if (request.storageKey === storageKey) {
+        // Reload the conversation to show updated messages
+        loadMessages(storageKey);
+      }
+    }
+    sendResponse({ success: true });
+  }
+  
   return true;
 });
