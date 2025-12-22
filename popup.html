@@ -12,7 +12,12 @@
     }
     .header { background: #1a1a1a; border-bottom: 1px solid #2d2d2d; flex-shrink: 0; }
     
-    .progress-wrapper { padding: 15px 20px 5px 20px; display: flex; }
+    .progress-wrapper { 
+      padding: 15px 20px 5px 20px; 
+      display: flex; 
+      align-items: center; 
+    }
+    
     .search-wrapper { padding: 5px 20px 15px 20px; }
     
     .progress-indicator {
@@ -22,47 +27,57 @@
     .progress-indicator.visible { opacity: 1; }
     .progress-circle { transform: rotate(-90deg); }
     .progress-bg { fill: none; stroke: #2d2d2d; stroke-width: 3; }
-    .progress-fill { fill: none; stroke: #10b981; stroke-width: 3; stroke-linecap: round; transition: 0.3s; }
-    .progress-text { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 11px; font-weight: 700; color: #10b981; }
+    
+    /* Progress Circle: Blue */
+    .progress-fill { 
+      fill: none; 
+      stroke: #3b82f6; 
+      stroke-width: 3; 
+      stroke-linecap: round; 
+      transition: 0.3s; 
+    }
+    .progress-text { 
+      position: absolute; top: 50%; left: 50%; 
+      transform: translate(-50%, -50%); 
+      font-size: 11px; font-weight: 700; 
+      color: #3b82f6; 
+    }
     
     .search-box { position: relative; }
-    #search-input { width: 100%; padding: 10px 10px 10px 35px; border: 1px solid #2d2d2d; border-radius: 8px; background: #0d0d0d; color: #e5e5e5; outline: none; }
+    #search-input { 
+      width: 100%; padding: 10px 10px 10px 35px; 
+      border: 1px solid #2d2d2d; border-radius: 8px; 
+      background: #0d0d0d; color: #e5e5e5; outline: none; 
+    }
+    #search-input:focus { border-color: #facc15; } /* Yellow Focus */
     .search-icon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); opacity: 0.4; }
     
     .content { flex: 1; overflow-y: auto; padding: 10px 20px; background: #0d0d0d; }
     
-    /* MESSAGE CARD WITH ICON */
     .message-card { 
-      padding: 12px; 
-      margin-bottom: 8px; 
-      cursor: pointer; 
-      border-left: 2px solid transparent; 
-      display: flex;
-      gap: 12px;
-      align-items: flex-start;
-      border-radius: 4px;
+      padding: 12px; margin-bottom: 8px; cursor: pointer; 
+      border-left: 2px solid transparent; display: flex;
+      gap: 12px; align-items: flex-start; border-radius: 4px;
       transition: background 0.2s;
     }
     .message-card:hover { background: #1a1a1a; }
-    .message-card.highlight { background: #1f1f1f; border-left-color: #d97706; }
+    
+    /* Highlight: Dark Yellow/Amber Theme */
+    .message-card.highlight { 
+      background: #262110; 
+      border-left-color: #facc15; 
+    }
     
     .card-icon {
-      flex-shrink: 0;
-      width: 18px;
-      height: 18px;
-      margin-top: 2px;
-      opacity: 0.5;
-      color: #d97706; /* Matches your highlight color */
+      flex-shrink: 0; width: 18px; height: 18px;
+      margin-top: 2px; opacity: 0.8; 
+      color: #facc15; /* Yellow Icon */
     }
 
     .message-content { 
-      font-size: 13px; 
-      color: #d4d4d4; 
-      display: -webkit-box; 
-      -webkit-line-clamp: 2; 
-      -webkit-box-orient: vertical; 
-      overflow: hidden; 
-      line-height: 1.4;
+      font-size: 13px; color: #d4d4d4; 
+      display: -webkit-box; -webkit-line-clamp: 2; 
+      -webkit-box-orient: vertical; overflow: hidden; line-height: 1.4;
     }
     
     .content::-webkit-scrollbar { width: 6px; }
