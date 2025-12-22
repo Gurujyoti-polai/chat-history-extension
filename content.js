@@ -5,6 +5,7 @@
   let lastMessageCount = 0;
   let currentUrl = window.location.href;
   let tabId = null;
+  let pendingUserMessages = new Map(); // Track pending user messages
   
   const hostname = window.location.hostname;
   let platform = null;
@@ -26,43 +27,72 @@
         
         return hasUserBg && hasItemsEnd;
       },
+      isAssistantMessage: (el) => {
+        const hasAssistantFont = el.innerHTML.includes('font-claude-response');
+        const hasStreaming = el.querySelector('[data-is-streaming]');
+        return hasAssistantFont || hasStreaming;
+      },
       getContent: (el) => {
         const userMsg = el.querySelector('[data-testid="user-message"]');
         if (userMsg) return userMsg.textContent.trim();
         return el.textContent.trim();
       },
       hasAssistantResponse: (allMessages, userMessageIndex) => {
-        return userMessageIndex < allMessages.length - 1;
+        // Check if there's an assistant message after this user message
+        for (let i = userMessageIndex + 1; i < allMessages.length; i++) {
+          if (config.isAssistantMessage(allMessages[i])) {
+            return true;
+          }
+        }
+        return false;
       }
     },
     'chat.openai.com': {
       messageSelector: '[data-message-author-role]',
       isUserMessage: (el) => el.getAttribute('data-message-author-role') === 'user',
+      isAssistantMessage: (el) => el.getAttribute('data-message-author-role') === 'assistant',
       getContent: (el) => {
         const markdown = el.querySelector('.markdown, [data-message-content], .whitespace-pre-wrap');
         return markdown ? markdown.textContent.trim() : el.textContent.trim();
       },
       hasAssistantResponse: (allMessages, userMessageIndex) => {
-        return userMessageIndex < allMessages.length - 1;
+        for (let i = userMessageIndex + 1; i < allMessages.length; i++) {
+          if (allMessages[i].getAttribute('data-message-author-role') === 'assistant') {
+            return true;
+          }
+        }
+        return false;
       }
     },
     'chatgpt.com': {
       messageSelector: '[data-message-author-role]',
       isUserMessage: (el) => el.getAttribute('data-message-author-role') === 'user',
+      isAssistantMessage: (el) => el.getAttribute('data-message-author-role') === 'assistant',
       getContent: (el) => {
         const markdown = el.querySelector('.markdown, [data-message-content], .whitespace-pre-wrap');
         return markdown ? markdown.textContent.trim() : el.textContent.trim();
       },
       hasAssistantResponse: (allMessages, userMessageIndex) => {
-        return userMessageIndex < allMessages.length - 1;
+        for (let i = userMessageIndex + 1; i < allMessages.length; i++) {
+          if (allMessages[i].getAttribute('data-message-author-role') === 'assistant') {
+            return true;
+          }
+        }
+        return false;
       }
     },
     'gemini.google.com': {
       messageSelector: 'user-query, model-response',
       isUserMessage: (el) => el.tagName.toLowerCase() === 'user-query',
+      isAssistantMessage: (el) => el.tagName.toLowerCase() === 'model-response',
       getContent: (el) => el.textContent.trim(),
       hasAssistantResponse: (allMessages, userMessageIndex) => {
-        return userMessageIndex < allMessages.length - 1;
+        for (let i = userMessageIndex + 1; i < allMessages.length; i++) {
+          if (allMessages[i].tagName.toLowerCase() === 'model-response') {
+            return true;
+          }
+        }
+        return false;
       }
     }
   };
@@ -121,6 +151,7 @@
       trackedMessages.clear();
       messageElements.clear();
       messageContents.clear();
+      pendingUserMessages.clear();
       lastMessageCount = 0;
     }
   }
@@ -218,6 +249,23 @@
     const newMessages = [];
     const allMessages = Array.from(msgs);
     
+    // Clean up old pending messages that now have responses
+    const pendingToRemove = [];
+    pendingUserMessages.forEach((msgData, msgId) => {
+      const msgIndex = allMessages.findIndex(el => {
+        const content = config.getContent(el);
+        return hashString(content + storageKey) === msgId;
+      });
+      
+      if (msgIndex !== -1 && config.hasAssistantResponse(allMessages, msgIndex)) {
+        pendingToRemove.push(msgId);
+      }
+    });
+    
+    pendingToRemove.forEach(msgId => {
+      pendingUserMessages.delete(msgId);
+    });
+    
     allMessages.forEach((el, idx) => {
       const txt = config.getContent(el);
       
@@ -237,10 +285,11 @@
       const isUser = config.isUserMessage(el, idx);
       
       if (isUser && !trackedMessages.has(msgId + '_saved')) {
-        trackedMessages.add(msgId + '_saved');
         const hasResponse = config.hasAssistantResponse(allMessages, idx);
         
         if (hasResponse) {
+          // This user message has a response, save it
+          trackedMessages.add(msgId + '_saved');
           newMessages.push({
             id: msgId,
             role: 'user',
@@ -249,8 +298,35 @@
             timestamp: new Date().toISOString(),
             index: idx
           });
+          
+          // Remove from pending if it was there
+          pendingUserMessages.delete(msgId);
+        } else {
+          // No response yet, track it as pending
+          if (!pendingUserMessages.has(msgId)) {
+            pendingUserMessages.set(msgId, {
+              content: txt,
+              timestamp: Date.now(),
+              index: idx
+            });
+          }
         }
       }
+    });
+    
+    // Remove messages from storage that are still pending (no response after 5 seconds)
+    const now = Date.now();
+    const messagesToRemove = [];
+    pendingUserMessages.forEach((msgData, msgId) => {
+      if (now - msgData.timestamp > 5000) {
+        // Message has been pending for more than 5 seconds, likely hit limit
+        messagesToRemove.push(msgId);
+        trackedMessages.delete(msgId + '_saved');
+      }
+    });
+    
+    messagesToRemove.forEach(msgId => {
+      pendingUserMessages.delete(msgId);
     });
     
     if (newMessages.length > 0) {
