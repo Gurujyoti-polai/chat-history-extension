@@ -221,6 +221,7 @@
     if (el && document.contains(el)) {
       el.scrollIntoView({ behavior: 'smooth', block: 'center' });
       highlightElement(el);
+      sendProgressUpdate(messageId);
       return true;
     }
     
@@ -235,6 +236,7 @@
         messageElements.set(messageId, msg);
         msg.scrollIntoView({ behavior: 'smooth', block: 'center' });
         highlightElement(msg);
+        sendProgressUpdate(messageId);
         return true;
       }
     }
@@ -245,6 +247,7 @@
     if (el && document.contains(el)) {
       el.scrollIntoView({ behavior: 'smooth', block: 'center' });
       highlightElement(el);
+      sendProgressUpdate(messageId);
       return true;
     }
     
@@ -259,6 +262,7 @@
         messageElements.set(messageId, msg);
         msg.scrollIntoView({ behavior: 'smooth', block: 'center' });
         highlightElement(msg);
+        sendProgressUpdate(messageId);
         return true;
       }
       
@@ -267,11 +271,20 @@
         messageElements.set(messageId, msg);
         msg.scrollIntoView({ behavior: 'smooth', block: 'center' });
         highlightElement(msg);
+        sendProgressUpdate(messageId);
         return true;
       }
     }
     
     return false;
+  }
+
+  function sendProgressUpdate(messageId) {
+    chrome.runtime.sendMessage({
+      action: 'updateProgress',
+      messageId: messageId,
+      storageKey: storageKey
+    });
   }
 
   function highlightElement(el) {
@@ -290,6 +303,33 @@
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === 'ping') {
       sendResponse({ success: true, ready: true });
+      return true;
+    }
+    
+    if (request.action === 'getCurrentPosition') {
+      const allMessages = document.querySelectorAll(config.messageSelector);
+      if (allMessages.length === 0) {
+        sendResponse({ messageId: null });
+        return true;
+      }
+      
+      const viewportCenter = window.innerHeight / 2;
+      let closestMessage = null;
+      let closestDistance = Infinity;
+      
+      allMessages.forEach(msg => {
+        const rect = msg.getBoundingClientRect();
+        const msgCenter = rect.top + rect.height / 2;
+        const distance = Math.abs(msgCenter - viewportCenter);
+        
+        if (distance < closestDistance && config.isUserMessage(msg)) {
+          closestDistance = distance;
+          const content = config.getContent(msg);
+          closestMessage = hashString(content + storageKey);
+        }
+      });
+      
+      sendResponse({ messageId: closestMessage });
       return true;
     }
     
