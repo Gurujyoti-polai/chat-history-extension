@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "AI Chat History Tracker",
+  "name": "Zing",
   "version": "1.0.4",
   "description": "Track and search your AI chat conversations",
   "permissions": [

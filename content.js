@@ -4,6 +4,7 @@
   let messageContents = new Map();
   let lastMessageCount = 0;
   let currentUrl = window.location.href;
+  let tabId = null;
   
   const hostname = window.location.hostname;
   let platform = null;
@@ -78,12 +79,34 @@
     return;
   }
   
-  function getStorageKey(url) {
-    let hash = 0;
-    for (let i = 0; i < url.length; i++) {
-      hash = ((hash << 5) - hash) + url.charCodeAt(i);
+
+  async function initializeTabId() {
+    try {
+      tabId = 'tab_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+      sessionStorage.setItem('chatTrackerTabId', tabId);
+    } catch (e) {
+      tabId = 'tab_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
     }
-    return 'chat_' + Math.abs(hash).toString(36);
+  }
+  
+  initializeTabId();
+  
+  function getStorageKey(url) {
+    const urlObj = new URL(url);
+    const pathParts = urlObj.pathname.split('/').filter(p => p.length > 0);
+    
+    let uniquePart = urlObj.pathname;
+    if (pathParts.length > 0) {
+      uniquePart = pathParts[pathParts.length - 1];
+    }
+    
+    let hash = 0;
+    const fullString = uniquePart + urlObj.search;
+    for (let i = 0; i < fullString.length; i++) {
+      hash = ((hash << 5) - hash) + fullString.charCodeAt(i);
+    }
+    
+    return 'chat_' + Math.abs(hash).toString(36) + '_' + tabId;
   }
   
   let storageKey = getStorageKey(currentUrl);
@@ -103,8 +126,85 @@
   }
 
   setInterval(checkUrlChange, 1000);
-  setTimeout(captureMessages, 1000);
-  setInterval(captureMessages, 3000);
+  
+  setTimeout(captureMessages, 500);
+  setInterval(captureMessages, 2000);
+
+  let scrollTimeout;
+  let lastScrollTime = 0;
+  let isScrolling = false;
+  
+  window.addEventListener('scroll', () => {
+    const now = Date.now();
+    
+    detectCurrentPosition();
+    lastScrollTime = now;
+    isScrolling = true;
+    
+    clearTimeout(scrollTimeout);
+    
+    scrollTimeout = setTimeout(() => {
+      isScrolling = false;
+      detectCurrentPosition();
+    }, 100);
+  }, { passive: true });
+  
+  let observer;
+  function setupIntersectionObserver() {
+    if (observer) observer.disconnect();
+    
+    observer = new IntersectionObserver((entries) => {
+      if (!isScrolling) {
+        detectCurrentPosition();
+      }
+    }, {
+      threshold: [0, 0.25, 0.5, 0.75, 1],
+      rootMargin: '0px'
+    });
+    
+    const msgs = document.querySelectorAll(config.messageSelector);
+    msgs.forEach(msg => observer.observe(msg));
+  }
+
+  function detectCurrentPosition() {
+    const msgs = document.querySelectorAll(config.messageSelector);
+    if (msgs.length === 0) return;
+
+    const viewportCenter = window.innerHeight / 2;
+    const viewportTop = window.scrollY;
+    const viewportBottom = viewportTop + window.innerHeight;
+    
+    let closestId = null;
+    let minDistance = Infinity;
+
+    msgs.forEach(el => {
+      const rect = el.getBoundingClientRect();
+      const elementTop = rect.top + viewportTop;
+      const elementBottom = elementTop + rect.height;
+      
+      if (elementBottom < viewportTop - 500 || elementTop > viewportBottom + 500) {
+        return;
+      }
+      
+      const elementCenter = rect.top + rect.height / 2;
+      const distance = Math.abs(elementCenter - viewportCenter);
+      const msgId = el.dataset.trackedId;
+      
+      if (msgId && distance < minDistance) {
+        minDistance = distance;
+        closestId = msgId;
+      }
+    });
+
+    if (closestId) {
+      chrome.runtime.sendMessage({
+        action: 'updateProgress',
+        messageId: closestId,
+        storageKey: storageKey,
+        tabId: tabId
+      }).catch(() => {});
+    }
+  }
 
   async function captureMessages() {
     checkUrlChange();
@@ -156,6 +256,8 @@
     if (newMessages.length > 0) {
       await saveMessages(newMessages);
     }
+
+    detectCurrentPosition();
   }
 
   async function saveMessages(newMessages) {
@@ -164,6 +266,7 @@
       url: window.location.href,
       title: document.title || `${platform} Chat`,
       createdAt: new Date().toISOString(),
+      tabId: tabId,
       messages: []
     };
 
@@ -283,7 +386,8 @@
     chrome.runtime.sendMessage({
       action: 'updateProgress',
       messageId: messageId,
-      storageKey: storageKey
+      storageKey: storageKey,
+      tabId: tabId
     });
   }
 
@@ -302,14 +406,19 @@
 
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === 'ping') {
-      sendResponse({ success: true, ready: true });
+      sendResponse({ success: true, ready: true, tabId: tabId });
+      return true;
+    }
+    
+    if (request.action === 'getTabId') {
+      sendResponse({ tabId: tabId });
       return true;
     }
     
     if (request.action === 'getCurrentPosition') {
       const allMessages = document.querySelectorAll(config.messageSelector);
       if (allMessages.length === 0) {
-        sendResponse({ messageId: null });
+        sendResponse({ messageId: null, tabId: tabId });
         return true;
       }
       
@@ -322,20 +431,20 @@
         const msgCenter = rect.top + rect.height / 2;
         const distance = Math.abs(msgCenter - viewportCenter);
         
-        if (distance < closestDistance && config.isUserMessage(msg)) {
+        const msgId = msg.dataset.trackedId;
+        if (msgId && distance < closestDistance) {
           closestDistance = distance;
-          const content = config.getContent(msg);
-          closestMessage = hashString(content + storageKey);
+          closestMessage = msgId;
         }
       });
       
-      sendResponse({ messageId: closestMessage });
+      sendResponse({ messageId: closestMessage, tabId: tabId });
       return true;
     }
     
     if (request.action === 'scanNow') {
       captureMessages().then(() => {
-        sendResponse({ success: true });
+        sendResponse({ success: true, tabId: tabId });
       });
       return true;
     }
