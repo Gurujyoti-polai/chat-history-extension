@@ -2,11 +2,11 @@
   let trackedMessages = new Set();
   let messageElements = new Map();
   let messageContents = new Map();
-  let lastMessageCount = 0;
   let currentUrl = window.location.href;
   let tabId = null;
   let pendingUserMessages = new Map();
-  let lastVisibleMessageIds = new Set(); // Track currently visible messages
+  let lastVisibleMessageIds = new Set();
+  let messageOrder = [];
 
   const hostname = window.location.hostname;
   let platform = null;
@@ -46,14 +46,6 @@
         }
         return false;
       },
-      // Detect if chat was edited/branched
-      detectBranch: (el) => {
-        // Check for branch indicators in Claude
-        const hasBranchButton =
-          el.querySelector('[aria-label*="branch"]') ||
-          el.querySelector('[title*="branch"]');
-        return !!hasBranchButton;
-      },
     },
     "chat.openai.com": {
       messageSelector: "[data-message-author-role]",
@@ -77,9 +69,6 @@
           }
         }
         return false;
-      },
-      detectBranch: (el) => {
-        return false; // ChatGPT handles this differently
       },
     },
     "chatgpt.com": {
@@ -105,24 +94,21 @@
         }
         return false;
       },
-      detectBranch: (el) => {
-        return false;
-      },
     },
     "gemini.google.com": {
       messageSelector: "user-query, model-response",
       isUserMessage: (el) => el.tagName.toLowerCase() === "user-query",
       isAssistantMessage: (el) => el.tagName.toLowerCase() === "model-response",
-      getContent: (el) => el.textContent.trim(),
+      getContent: (el) => {
+        const textEl = el.querySelector('.query-text') || el.querySelector('.markdown');
+        return textEl ? textEl.textContent.trim() : el.textContent.trim();
+      },
       hasAssistantResponse: (allMessages, userMessageIndex) => {
         for (let i = userMessageIndex + 1; i < allMessages.length; i++) {
           if (allMessages[i].tagName.toLowerCase() === "model-response") {
             return true;
           }
         }
-        return false;
-      },
-      detectBranch: (el) => {
         return false;
       },
     },
@@ -185,7 +171,7 @@
       messageContents.clear();
       pendingUserMessages.clear();
       lastVisibleMessageIds.clear();
-      lastMessageCount = 0;
+      messageOrder = [];
     }
   }
 
@@ -252,7 +238,6 @@
       const msgId = el.dataset.trackedId;
       if (!msgId) return;
 
-      // Ignore messages far below viewport
       if (rect.top > window.innerHeight) return;
 
       let score;
@@ -287,12 +272,22 @@
     const msgs = document.querySelectorAll(config.messageSelector);
     const allMessages = Array.from(msgs);
 
+    allMessages.sort((a, b) => {
+      const position = a.compareDocumentPosition(b);
+      if (position & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+      if (position & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+      return 0;
+    });
+
     const currentVisibleIds = new Set();
+    const newMessageOrder = [];
+    
     allMessages.forEach((el) => {
       const txt = config.getContent(el);
       if (txt.length >= 5 && txt.length <= 10000) {
         const msgId = hashString(txt + storageKey);
         currentVisibleIds.add(msgId);
+        newMessageOrder.push(msgId);
       }
     });
 
@@ -300,18 +295,18 @@
       (id) => !currentVisibleIds.has(id)
     );
 
-    if (messagesDisappeared && lastVisibleMessageIds.size > 0) {
+    const orderChanged = !arraysEqual(newMessageOrder, messageOrder.filter(id => currentVisibleIds.has(id)));
+
+    if ((messagesDisappeared && lastVisibleMessageIds.size > 0) || orderChanged) {
       await rebuildConversation(allMessages);
       lastVisibleMessageIds = currentVisibleIds;
+      messageOrder = newMessageOrder;
       detectCurrentPosition();
       return;
     }
 
     lastVisibleMessageIds = currentVisibleIds;
-
-    if (msgs.length !== lastMessageCount) {
-      lastMessageCount = msgs.length;
-    }
+    messageOrder = newMessageOrder;
 
     const newMessages = [];
 
@@ -334,6 +329,7 @@
       pendingUserMessages.delete(msgId);
     });
 
+    // Process all visible messages
     allMessages.forEach((el, idx) => {
       const txt = config.getContent(el);
 
@@ -364,6 +360,7 @@
             summary: txt.slice(0, 60) + (txt.length > 60 ? "..." : ""),
             timestamp: new Date().toISOString(),
             index: idx,
+            domPosition: idx
           });
 
           pendingUserMessages.delete(msgId);
@@ -405,6 +402,13 @@
     messageContents.clear();
     pendingUserMessages.clear();
 
+    allMessages.sort((a, b) => {
+      const position = a.compareDocumentPosition(b);
+      if (position & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+      if (position & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+      return 0;
+    });
+
     const messagesToSave = [];
 
     allMessages.forEach((el, idx) => {
@@ -433,6 +437,7 @@
             summary: txt.slice(0, 60) + (txt.length > 60 ? "..." : ""),
             timestamp: new Date().toISOString(),
             index: idx,
+            domPosition: idx
           });
         }
       }
@@ -486,34 +491,90 @@
     return Math.abs(hash).toString(36);
   }
 
-  async function forceLoadAllMessages() {
-    const originalScrollY = window.scrollY;
+  function arraysEqual(a, b) {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] !== b[i]) return false;
+    }
+    return true;
+  }
 
-    window.scrollTo({ top: 0, behavior: "auto" });
+  async function forceLoadAllMessages() {
+    const scrollContainer = findScrollContainer();
+    if (!scrollContainer) return window.scrollY;
+    
+    const originalScrollPos = scrollContainer.scrollTop || window.scrollY;
+
+    if (scrollContainer === document.body || scrollContainer === document.documentElement) {
+      window.scrollTo({ top: 0, behavior: "auto" });
+    } else {
+      scrollContainer.scrollTop = 0;
+    }
     await new Promise((resolve) => setTimeout(resolve, 300));
 
-    const docHeight = Math.max(
-      document.body.scrollHeight,
-      document.documentElement.scrollHeight
-    );
+    const scrollHeight = scrollContainer.scrollHeight || document.documentElement.scrollHeight;
+    const clientHeight = scrollContainer.clientHeight || window.innerHeight;
+    const maxScroll = scrollHeight - clientHeight;
 
-    const scrollSteps = 6;
-    const stepSize = docHeight / scrollSteps;
+    const steps = 8;
+    const stepSize = maxScroll / steps;
 
-    for (let i = 0; i <= scrollSteps; i++) {
-      window.scrollTo({ top: stepSize * i, behavior: "auto" });
-      await new Promise((resolve) => setTimeout(resolve, 150));
+    for (let i = 0; i <= steps; i++) {
+      const targetScroll = stepSize * i;
+      if (scrollContainer === document.body || scrollContainer === document.documentElement) {
+        window.scrollTo({ top: targetScroll, behavior: "auto" });
+      } else {
+        scrollContainer.scrollTop = targetScroll;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      await captureMessages();
     }
 
-    window.scrollTo({ top: docHeight, behavior: "auto" });
+    if (scrollContainer === document.body || scrollContainer === document.documentElement) {
+      window.scrollTo({ top: maxScroll, behavior: "auto" });
+    } else {
+      scrollContainer.scrollTop = maxScroll;
+    }
     await new Promise((resolve) => setTimeout(resolve, 300));
-
-    window.scrollTo({ top: 0, behavior: "auto" });
-    await new Promise((resolve) => setTimeout(resolve, 300));
-
     await captureMessages();
 
-    return originalScrollY;
+    if (scrollContainer === document.body || scrollContainer === document.documentElement) {
+      window.scrollTo({ top: originalScrollPos, behavior: "auto" });
+    } else {
+      scrollContainer.scrollTop = originalScrollPos;
+    }
+
+    return originalScrollPos;
+  }
+
+  function findScrollContainer() {
+    if (platform === "gemini.google.com") {
+      const geminiContainer = document.querySelector('.mat-sidenav-content');
+      if (geminiContainer) return geminiContainer;
+    }
+    
+    const mainEl = document.querySelector('main');
+    if (mainEl) {
+      const scrollable = findScrollableAncestor(mainEl);
+      if (scrollable && scrollable !== document.body && scrollable !== document.documentElement) {
+        return scrollable;
+      }
+    }
+    
+    return document.documentElement || document.body;
+  }
+
+  function findScrollableAncestor(node) {
+    let current = node;
+    while (current && current !== document.body) {
+      const style = window.getComputedStyle(current);
+      const overflowY = style.overflowY || style.overflow;
+      if (/(auto|scroll)/.test(overflowY) && current.scrollHeight > current.clientHeight) {
+        return current;
+      }
+      current = current.parentElement;
+    }
+    return null;
   }
 
   async function findAndScrollToMessage(messageId, targetContent) {
@@ -526,7 +587,6 @@
     }
 
     const msgs = document.querySelectorAll(config.messageSelector);
-
     for (const msg of msgs) {
       const content = config.getContent(msg);
       const computedId = hashString(content + storageKey);
@@ -552,21 +612,11 @@
     }
 
     const allMsgs = document.querySelectorAll(config.messageSelector);
-
     for (const msg of allMsgs) {
       const content = config.getContent(msg);
       const computedId = hashString(content + storageKey);
 
-      if (computedId === messageId) {
-        msg.dataset.trackedId = messageId;
-        messageElements.set(messageId, msg);
-        msg.scrollIntoView({ behavior: "smooth", block: "center" });
-        highlightElement(msg);
-        sendProgressUpdate(messageId);
-        return true;
-      }
-
-      if (targetContent && content.includes(targetContent.substring(0, 50))) {
+      if (computedId === messageId || (targetContent && content.includes(targetContent.substring(0, 50)))) {
         msg.dataset.trackedId = messageId;
         messageElements.set(messageId, msg);
         msg.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -643,28 +693,18 @@
       });
 
       sendResponse({ messageId: bestId, tabId });
-
-      let closestMessage = null;
-      let closestDistance = Infinity;
-
-      allMessages.forEach((msg) => {
-        const rect = msg.getBoundingClientRect();
-        const msgCenter = rect.top + rect.height / 2;
-        const distance = Math.abs(msgCenter - viewportCenter);
-
-        const msgId = msg.dataset.trackedId;
-        if (msgId && distance < closestDistance) {
-          closestDistance = distance;
-          closestMessage = msgId;
-        }
-      });
-
-      sendResponse({ messageId: closestMessage, tabId: tabId });
       return true;
     }
 
     if (request.action === "scanNow") {
       captureMessages().then(() => {
+        sendResponse({ success: true, tabId: tabId });
+      });
+      return true;
+    }
+
+    if (request.action === "loadAllMessages") {
+      forceLoadAllMessages().then(() => {
         sendResponse({ success: true, tabId: tabId });
       });
       return true;
