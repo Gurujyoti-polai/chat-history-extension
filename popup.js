@@ -1,6 +1,8 @@
 let currentConversation = null;
 let currentUrl = "";
 let currentTabId = null;
+let isUserScrolling = false;
+let scrollTimeout = null;
 
 document.addEventListener("DOMContentLoaded", async () => {
   await loadCurrentConversation();
@@ -178,7 +180,6 @@ function updateProgressBar(currentMsg, totalMsgs) {
   const circumference = 150.8;
   const offset = circumference - (clamped / 100) * circumference;
 
-  // Use requestAnimationFrame for smoother updates
   requestAnimationFrame(() => {
     progressFill.style.strokeDashoffset = offset;
     progressText.textContent = Math.round(clamped) + "%";
@@ -187,16 +188,32 @@ function updateProgressBar(currentMsg, totalMsgs) {
 }
 
 function highlightMessageCard(messageId) {
-  // Use requestAnimationFrame for smoother highlighting
   requestAnimationFrame(() => {
-    // Remove existing highlights
     document.querySelectorAll(".message-card").forEach(c => c.classList.remove("highlight"));
     
-    // Add highlight to current message
     const activeCard = document.querySelector(`[data-message-id="${messageId}"]`);
     if (activeCard) {
       activeCard.classList.add("highlight");
-      activeCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      
+      if (isUserScrolling) {
+        return;
+      }
+      
+      const content = document.getElementById("content");
+      if (content) {
+        const cardRect = activeCard.getBoundingClientRect();
+        const contentRect = content.getBoundingClientRect();
+        
+        // Check if card is fully visible within content area
+        const isVisible = (
+          cardRect.top >= contentRect.top &&
+          cardRect.bottom <= contentRect.bottom
+        );
+        
+        if (!isVisible) {
+          activeCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      }
     }
   });
 }
@@ -217,6 +234,33 @@ function setupEventListeners() {
     const content = document.getElementById("content");
     content.scrollTo({ top: content.scrollTop > 100 ? 0 : content.scrollHeight, behavior: "smooth" });
   });
+  
+  const content = document.getElementById("content");
+  if (content) {
+    content.addEventListener("scroll", () => {
+      isUserScrolling = true;
+      
+      if (scrollTimeout) {
+        clearTimeout(scrollTimeout);
+      }
+      
+      scrollTimeout = setTimeout(() => {
+        isUserScrolling = false;
+      }, 2000);
+    }, { passive: true });
+    
+    content.addEventListener("wheel", () => {
+      isUserScrolling = true;
+      
+      if (scrollTimeout) {
+        clearTimeout(scrollTimeout);
+      }
+      
+      scrollTimeout = setTimeout(() => {
+        isUserScrolling = false;
+      }, 2000);
+    }, { passive: true });
+  }
 }
 
 function handleSearch(e) {
@@ -272,12 +316,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     sendResponse({ success: true });
   }
   
-  // Handle conversation rebuild (when chat is edited/branched)
   if (request.action === "conversationRebuilt") {
     if (request.tabId === currentTabId) {
       const storageKey = getStorageKey(currentUrl, currentTabId);
       if (request.storageKey === storageKey) {
-        // Reload the conversation to show updated messages
         loadMessages(storageKey);
       }
     }
