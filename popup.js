@@ -74,7 +74,7 @@ async function loadCurrentConversation() {
     }
 
     currentUrl = tab.url;
-    const supportedSites = ["chatgpt.com", "chat.openai.com", "claude.ai", "gemini.google.com", "copilot.microsoft.com"];
+    const supportedSites = ["chatgpt.com", "claude.ai", "gemini.google.com", "copilot.microsoft.com"];
     if (!supportedSites.some(site => currentUrl.includes(site))) { 
       showNotSupported(); 
       return; 

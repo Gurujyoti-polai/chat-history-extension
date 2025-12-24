@@ -47,30 +47,6 @@
         return false;
       },
     },
-    "chat.openai.com": {
-      messageSelector: "[data-message-author-role]",
-      isUserMessage: (el) =>
-        el.getAttribute("data-message-author-role") === "user",
-      isAssistantMessage: (el) =>
-        el.getAttribute("data-message-author-role") === "assistant",
-      getContent: (el) => {
-        const markdown = el.querySelector(
-          ".markdown, [data-message-content], .whitespace-pre-wrap"
-        );
-        return markdown ? markdown.textContent.trim() : el.textContent.trim();
-      },
-      hasAssistantResponse: (allMessages, userMessageIndex) => {
-        for (let i = userMessageIndex + 1; i < allMessages.length; i++) {
-          if (
-            allMessages[i].getAttribute("data-message-author-role") ===
-            "assistant"
-          ) {
-            return true;
-          }
-        }
-        return false;
-      },
-    },
     "chatgpt.com": {
       messageSelector: "[data-message-author-role]",
       isUserMessage: (el) =>
