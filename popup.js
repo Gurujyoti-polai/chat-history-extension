@@ -101,9 +101,7 @@ async function loadCurrentConversation() {
           const response = await chrome.tabs.sendMessage(tab.id, { action: "getTabId" });
           tabIdResponse = response?.tabId;
         } catch (e) {}
-      } catch (e) {
-        console.error('Script injection failed:', e);
-      }
+      } catch (e) {}
     }
 
     currentTabId = tabIdResponse;
@@ -136,14 +134,12 @@ async function loadCurrentConversation() {
         
         await loadMessages(storageKey);
       } catch (e) {
-        console.error('Failed to load all messages:', e);
       } finally {
         isLoadingAllMessages = false;
       }
     }
 
   } catch (error) { 
-    console.error('Load error:', error);
     showError(); 
   }
 }
@@ -167,7 +163,6 @@ async function loadMessages(key) {
     
     renderMessages();
   } catch (error) { 
-    console.error('Load messages error:', error);
     showError(); 
   }
 }
@@ -228,7 +223,6 @@ function updateProgressBar(currentMsg, totalMsgs) {
     return;
   }
 
-  // Calculate percentage: reverse order (newest = 100%, oldest = 0%)
   const messageIndex = currentMsg - 1;
   const percentage = ((totalMsgs - 1 - messageIndex) / (totalMsgs - 1)) * 100;
   const clamped = Math.max(0, Math.min(100, percentage));
@@ -260,7 +254,6 @@ function highlightMessageCard(messageId) {
         const cardRect = activeCard.getBoundingClientRect();
         const contentRect = content.getBoundingClientRect();
         
-        // Check if card is fully visible within content area
         const isVisible = (
           cardRect.top >= contentRect.top &&
           cardRect.bottom <= contentRect.bottom

@@ -1,6 +1,6 @@
 // Background service worker
 chrome.runtime.onInstalled.addListener(() => {
-  console.log('AI Chat History Tracker installed');
+  // Extension installed
 });
 
 // Listen for tab updates
@@ -14,7 +14,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     ];
     
     if (supportedSites.some(site => tab.url.includes(site))) {
-      console.log('Supported AI chat site detected:', tab.url);
+      // Supported site detected
     }
   }
 });

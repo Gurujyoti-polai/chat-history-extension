@@ -305,7 +305,6 @@
       pendingUserMessages.delete(msgId);
     });
 
-    // Process all visible messages
     allMessages.forEach((el, idx) => {
       const txt = config.getContent(el);
 
